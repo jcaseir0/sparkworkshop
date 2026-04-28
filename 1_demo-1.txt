@@ -1,0 +1,64 @@
+import sys
+import os
+import io
+from pyspark.sql import SparkSession, functions as F
+
+spark = (
+    SparkSession.builder
+    .appName("Workshop Vivo - Spark 2 vs Spark 3")
+    .enableHiveSupport()
+    .getOrCreate()
+)
+
+spark.sql("USE training_spark3")
+
+df = spark.table("sales_txn")
+
+result = (
+    df.filter(F.col("status") == "ACTIVE")
+      .groupBy(F.col("segment"))
+      .agg(
+          F.count(F.lit(1)).alias("cnt"),
+          F.sum(F.col("amount")).alias("total_amount"),
+          F.avg(F.col("amount")).alias("avg_amount"),
+      )
+)
+
+# Output path
+output_path = sys.argv[1] if len(sys.argv) > 1 else "/training/spark3/<<user_name>>/1_demo-1_result"
+
+# Explain
+print("=== EXPLAIN ===")
+result.explain(True)
+print("=== END EXPLAIN ===")
+
+# Write explain in a plain text file
+output_explain_path = sys.argv[2] if len(sys.argv) > 2 else "/tmp/workshop/<<user_name>>/1_demo-1_explain.txt"
+
+print("=== WRITE EXPLAIN ===")
+# Ensure directory exists
+os.makedirs(os.path.dirname(output_explain_path), exist_ok=True)
+
+# Capture explain output
+with open(output_explain_path, "w") as f:
+    # Redirect stdout to capture explain output
+    old_stdout = sys.stdout
+    sys.stdout = buffer = io.StringIO()
+    try:
+        result.explain(True)
+    finally:
+        sys.stdout = old_stdout
+    
+    f.write(buffer.getvalue())
+
+print("=== END WRITE EXPLAIN ===")
+
+# Write result
+(
+    result.write
+    .mode("overwrite")
+    .parquet(output_path)
+)
+
+print(f"Write result to: {output_path}")
+spark.stop()

@@ -1,0 +1,115 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, expr, when, lit, unix_timestamp
+import time
+import logging
+
+# Logging setup
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Initialize Spark Session
+spark = SparkSession.builder \
+    .appName("Workshop Vivo - Create Data PySpark") \
+    .enableHiveSupport() \
+    .getOrCreate()
+
+# ------------------------------------------------------------------
+# 1) Create Database
+# ------------------------------------------------------------------
+spark.sql("CREATE DATABASE IF NOT EXISTS db_workshop")
+spark.catalog.setCurrentDatabase("db_workshop")
+
+# ------------------------------------------------------------------
+# 2) Table sales_txn (for Lab1, Lab2, demos Spark2 vs Spark3)
+# ------------------------------------------------------------------
+num_rows = 5000000
+
+# Base
+base = spark.range(num_rows).toDF("id")
+
+sales = base.select(
+    col("id").alias("txn_id"),
+    # Date between 2024-01-01 and 2024-12-31 (max 365 days)
+    expr("date_add(date'2024-01-01', cast(id % 365 as int))").alias("txn_date"),
+    (col("id") % 100000).cast("int").alias("customer_id"),
+
+    # Segment according to customer_id
+    when(col("id") % 5 == 0, "ENTERPRISE")
+        .when(col("id") % 5 == 1, "SME")
+        .when(col("id") % 5 == 2, "RETAIL")
+        .when(col("id") % 5 == 3, "GOV")
+        .otherwise("VIP")
+        .alias("segment"),
+
+    # Status: ~70% ACTIVE, 20% INACTIVE, 10% CANCELLED
+    when(col("id") % 10 < 7, "ACTIVE")
+        .when(col("id") % 10 < 9, "INACTIVE")
+        .otherwise("CANCELLED")
+        .alias("status"),
+
+    # Amount between 10 and ~5.000 (deterministic, without rand)
+    ((col("id") % 10000).cast("double") * 0.5 + lit(10.0)).alias("amount"),
+
+    # Country
+    when(col("id") % 3 == 0, "CO")
+        .when(col("id") % 3 == 1, "MX")
+        .otherwise("BR")
+        .alias("country"),
+
+    # Channel
+    when(col("id") % 4 == 0, "WEB")
+        .when(col("id") % 4 == 1, "POS")
+        .when(col("id") % 4 == 2, "MOBILE")
+        .otherwise("CALLCENTER")
+        .alias("channel"),
+
+    # Timestamp base + offset in seconds
+    (unix_timestamp(lit("2024-01-01 00:00:00")) + (col("id") % 86400)).cast("timestamp").alias("created_ts")
+)
+
+logger.info("Starting sales_txn table writing...")
+start_time = time.time()
+
+sales.write \
+    .mode("overwrite") \
+    .format("parquet") \
+    .saveAsTable("db_workshop.sales_txn")
+
+end_time = time.time()
+logger.info(f"Table sales_txn written in {end_time - start_time:.2f} seconds")
+
+
+# ------------------------------------------------------------------
+# 3) Tables for AQE: fact_skew_aqe (large and skewed) + dim_skew_aqe
+# ------------------------------------------------------------------
+
+num_fact = 20000000
+
+fact_skew = spark.range(num_fact).toDF("id").select(
+    col("id"),
+    # 90% arrow with key = 1 -> skew strong
+    when(col("id") < num_fact * 0.9, lit(1).cast("long"))
+     .otherwise(col("id"))
+     .alias("key"),
+    ((col("id") % lit(1000)).cast("double") * lit(0.1) + lit(5.0)).alias("amount"),
+)
+
+dim_skew = spark.range(0, 10000).toDF("id").select(
+    col("id").alias("key"),
+    ((col("id") % lit(100)).cast("double") * lit(0.01) + lit(1.0)).alias("factor"),
+)
+
+fact_skew.write \
+    .mode("overwrite") \
+    .format("parquet") \
+    .saveAsTable("db_workshop.fact_skew_aqe")
+
+dim_skew.write \
+    .mode("overwrite") \
+    .format("parquet") \
+    .saveAsTable("db_workshop.dim_skew_aqe")
+
+logger.info("Tables created in db_workshop:")
+spark.sql("SHOW TABLES").show(truncate=False)
+
+spark.stop()
