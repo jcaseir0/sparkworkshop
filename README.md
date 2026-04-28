@@ -3,7 +3,11 @@ Arquivos necessários para os laboratórios:
 
 ## 0_create_data.txt
 Anexo o script para a criação do conjunto de dados. A extensão do arquivo deve ser alterada para .py.
-Em seguida, execute o comando spark3-submit 0_create_data.py
+Em seguida, execute o comando:
+
+```shell
+spark3-submit 0_create_data.py
+```
 
 ## 1_demo-1.txt
 A extensão do arquivo deve ser alterada para .py.
