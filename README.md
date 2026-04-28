@@ -1,4 +1,4 @@
-# sparkworkshop
+# Spark Workshop
 Arquivos necessários para os laboratórios:
 
 ## 0_create_data.txt
